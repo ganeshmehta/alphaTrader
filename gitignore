@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Spark
+_checkpoints/
+spark-warehouse/
+derby.log
+metastore_db/
+
+# Env / secrets
+.env
+*.env.local
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -5,7 +5,7 @@ Reads the JSON events the producer pushed to Kafka, parses them against a fixed
 schema (must match producer.normalize()), and micro-batches them into Postgres
 using foreachBatch + JDBC.
 
-Run locally (no Docker)/
+Run locally (no Docker) with, e.g.:
 
     spark-submit \
         --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.3 \
