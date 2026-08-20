@@ -21,11 +21,11 @@ from pyspark.sql.types import (
     LongType, DoubleType,
 )
 
-# --- Config (env vars, with sensible localhost defaults) ---
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+# --- Config (env vars, with sensible 127.0.0.1 defaults) ---
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "raw_wiki_changes")
 
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "wikidata")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "wikiuser")

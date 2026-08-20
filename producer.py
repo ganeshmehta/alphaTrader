@@ -14,6 +14,9 @@ import logging
 import os
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import requests
 import sseclient
 from kafka import KafkaProducer
@@ -113,7 +116,14 @@ def run():
 
     while True:
         try:
-            resp = requests.get(STREAM_URL, stream=True, headers={"Accept": "text/event-stream"})
+            resp = requests.get(
+                STREAM_URL,
+                stream=True,
+                headers={
+                    "Accept": "text/event-stream",
+                    "User-Agent": "wiki-changeset-streaming/1.0 (https://github.com/ganeshmehta/alphaTrader; ganesh@example.com) python-requests"
+                }
+            )
             resp.raise_for_status()
             client = sseclient.SSEClient(resp)
 
