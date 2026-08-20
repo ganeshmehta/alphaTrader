@@ -31,7 +31,7 @@ log = logging.getLogger("wiki-producer")
 # --- Config (all overridable via environment variables) ---
 STREAM_URL = os.getenv("WIKI_STREAM_URL", "https://stream.wikimedia.org/v2/stream/recentchange")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "raw_wiki_changes")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "no_topic_specified")  # must be created in advance
 
 # Comma-separated wiki DB names to keep, e.g. "enwiki,enwiktionary".
 # Leave empty to keep every wiki (very high volume).
@@ -51,8 +51,7 @@ KAFKA_CONNECT_RETRY_SECONDS = 5
 def build_kafka_producer() -> KafkaProducer:
     """Create a KafkaProducer, retrying until the broker is reachable.
 
-    Kafka may not be ready yet when this container starts (docker-compose
-    doesn't guarantee readiness order beyond process start), so we retry
+    Kafka may not be ready yet when this container starts, so we retry
     instead of crash-looping.
     """
     while True:

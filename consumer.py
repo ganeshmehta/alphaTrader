@@ -23,7 +23,7 @@ from pyspark.sql.types import (
 
 # --- Config (env vars, with sensible 127.0.0.1 defaults) ---
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "raw_wiki_changes")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "no_topic_specified")
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
