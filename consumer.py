@@ -20,6 +20,8 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, BooleanType,
     LongType, DoubleType,
 )
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- Config (env vars, with sensible 127.0.0.1 defaults) ---
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
@@ -27,10 +29,10 @@ KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "no_topic_specified")
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "wikidata")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "wikiuser")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "wikipass")
-POSTGRES_TABLE = os.getenv("POSTGRES_TABLE", "wiki_changes_bronze")
+POSTGRES_DB = os.getenv("POSTGRES_DB")
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+POSTGRES_TABLE = os.getenv("POSTGRES_TABLE")
 
 JDBC_URL = f"jdbc:postgresql://{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 JDBC_PROPERTIES = {
@@ -71,7 +73,7 @@ def build_spark_session() -> SparkSession:
 
 def write_batch_to_postgres(batch_df, batch_id: int):
     """foreachBatch sink: dedupe within the micro-batch, then append to Postgres."""
-    if batch_df.rdd.isEmpty():
+    if batch_df.count() == 0:
         return
 
     deduped = batch_df.dropDuplicates(["meta_id"])
