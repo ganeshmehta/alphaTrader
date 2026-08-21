@@ -16,7 +16,7 @@ IF "%TOPIC_NAME%"=="" (
 
 echo.
 echo [1/1] Starting Wiki Producer for topic: %TOPIC_NAME%...
-start "Wiki Producer - %TOPIC_NAME%" cmd /k "cd /d %PROJECT_DIR% && set KAFKA_TOPIC=%TOPIC_NAME% && C:\Users\LENOVO\Desktop\venv\Scripts\python.exe producer.py"
+start "Wiki Producer - %TOPIC_NAME%" cmd /k "cd /d %PROJECT_DIR% && C:\Users\LENOVO\Desktop\venv\Scripts\python.exe producer.py %TOPIC_NAME%"
 
 echo.
 echo ==========================================
