@@ -33,7 +33,7 @@ STREAM_URL = os.getenv("WIKI_STREAM_URL", "https://stream.wikimedia.org/v2/strea
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
 KAFKA_TOPIC = sys.argv[1] if len(sys.argv) > 1 else os.getenv("KAFKA_TOPIC", "no_topic_specified")
 
-WIKI_FILTER = {w.strip() for w in os.getenv("WIKI_FILTER", "enwiki").split(",") if w.strip()}
+WIKI_FILTER = {w.strip() for w in os.getenv("WIKI_FILTER", "no-topic").split(",") if w.strip()}
 TYPE_FILTER = {t.strip() for t in os.getenv("TYPE_FILTER", "edit,new").split(",") if t.strip()}
 EXCLUDE_BOTS = os.getenv("EXCLUDE_BOTS", "true").lower() == "true"
 

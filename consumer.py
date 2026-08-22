@@ -20,8 +20,16 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, BooleanType,
     LongType, DoubleType,
 )
+
+import time
 from dotenv import load_dotenv
 load_dotenv()
+
+
+
+INSTANCE_ID = str(int(time.time()))
+CHECKPOINT_LOCATION = f"./_checkpoints/wiki_changes_bronze_{INSTANCE_ID}"
+
 
 # --- Config (env vars, with sensible 127.0.0.1 defaults) ---
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
@@ -40,8 +48,6 @@ JDBC_PROPERTIES = {
     "password": POSTGRES_PASSWORD,
     "driver": "org.postgresql.Driver",
 }
-
-CHECKPOINT_LOCATION = os.getenv("CHECKPOINT_LOCATION", "./_checkpoints/wiki_changes_bronze")
 
 # Must mirror the dict shape produced by producer.normalize()
 EVENT_SCHEMA = StructType([
