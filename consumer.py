@@ -20,6 +20,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, BooleanType,
     LongType, DoubleType,
 )
+from redis_writer import update_metrics_from_batch
 
 import time
 from dotenv import load_dotenv
@@ -84,13 +85,29 @@ def write_batch_to_postgres(batch_df, batch_id: int):
 
     deduped = batch_df.dropDuplicates(["meta_id"])
 
-    (
-        deduped.write
-        .mode("append")
-        .jdbc(url=JDBC_URL, table=POSTGRES_TABLE, properties=JDBC_PROPERTIES)
-    )
+    try:
+        deduped.write \
+            .mode("append") \
+            .jdbc(url=JDBC_URL, table=POSTGRES_TABLE, properties=JDBC_PROPERTIES)
+        print(f"[batch {batch_id}] wrote {deduped.count()} rows to {POSTGRES_TABLE}")
+    except Exception as e:
+        if "duplicate key" in str(e).lower():
+            print(f"[batch {batch_id}] skipping duplicates")
+        else:
+            raise e
 
-    print(f"[batch {batch_id}] wrote {deduped.count()} rows to {POSTGRES_TABLE}")
+    # Update Redis metrics
+    rows = [
+        {
+            "wiki": row.wiki,
+            "user": row.user,
+            "meta_id": row.meta_id,
+            "change_type": row.change_type,
+            "event_timestamp_epoch": row.event_timestamp.timestamp() if row.event_timestamp else None
+        }
+        for row in deduped.collect()
+    ]
+    update_metrics_from_batch(rows)
 
 
 def main():
