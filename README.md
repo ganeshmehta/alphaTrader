@@ -1,133 +1,201 @@
-# Real-Time Wikipedia Recent-Changes Pipeline
+# Wiki Changeset Streaming — Real-Time Wikipedia Analytics Pipeline
 
-Streams live edits from Wikimedia's public EventStreams feed into Kafka, then
-into Postgres via PySpark Structured Streaming.
+A production-grade real-time data pipeline that ingests live Wikipedia edit events, processes them through Apache Kafka and PySpark Structured Streaming, stores in PostgreSQL, caches real-time metrics in Redis, and visualizes on a Grafana dashboard.
 
-## Architecture (current scope)
+## Architecture
 
 ```
 Wikimedia EventStreams (SSE)
         ↓
-producer.py  →  Kafka topic: raw_wiki_changes
+producer.py (confluent-kafka)
         ↓
-consumer.py  (PySpark Structured Streaming)
+Apache Kafka — topic: raw_wiki_changes (3 partitions, MurmurHash2 routing)
+    Partition 0 → enwiki
+    Partition 1 → commonswiki
+    Partition 2 → ruwiki
         ↓
-PostgreSQL: wiki_changes_bronze
+consumer.py (PySpark Structured Streaming)
+        ↓
+    ┌───────────────────────────────┐
+    │  PostgreSQL                   │      Redis
+    │  wiki_changes_bronze (Bronze) │  +   edit_velocity:{wiki}   → Sorted Set
+    │  Raw event storage            │      top_editors:{wiki}      → Sorted Set
+    │  Permanent historical store   │      daily_counts:{wiki}     → Hash
+    └───────────────────────────────┘
+                    ↓
+            Grafana Dashboard
+            - Edit velocity (last 10 min)
+            - Top editors per wiki
+            - Edits per hour (last 24h)
 ```
 
-Airflow and dbt are intentionally out of scope for now. Docker packaging
-is also on hold; everything currently runs against a locally installed Kafka
-and Postgres.
+## Tech Stack
 
-## Components
+| Component | Technology | Purpose |
+|---|---|---|
+| Data Source | Wikimedia EventStreams (SSE) | Live Wikipedia edits |
+| Message Broker | Apache Kafka 3.8.0 | Real-time event streaming |
+| Stream Processing | PySpark Structured Streaming 3.5.1 | Micro-batch processing |
+| Primary Storage | PostgreSQL 16 | Bronze layer — raw event storage |
+| Cache | Redis (Memurai) | Real-time metrics for dashboard |
+| Visualization | Grafana | Live analytics dashboard |
+| Language | Python 3.14 | Producer, consumer, metrics writer |
+| Kafka Client | confluent-kafka | Producer (Python 3.14 compatible) |
 
-- **`producer.py`** — connects to `https://stream.wikimedia.org/v2/stream/recentchange`,
-  filters by wiki / event type / bot status, and publishes normalized JSON
-  events to a Kafka topic.
-- **`consumer.py`** — Structured Streaming job that reads that topic,
-  parses and reshapes the events, and appends them to Postgres in 10s
-  micro-batches, deduped by the source event's `meta_id`.
-- **`postgres_init/01_bronze_schema.sql`** — creates the `wiki_changes_bronze`
-  landing table.
+## Key Design Decisions
+
+- **MurmurHash2 partitioning** — Wiki name used as Kafka message key, automatically routed to consistent partition per wiki
+- **3 Kafka partitions** — One per wiki (enwiki, commonswiki, ruwiki), enabling parallel Spark task processing
+- **Bronze layer pattern** — Raw events stored as-is in Postgres for full historical replay capability
+- **Redis as speed layer** — Pre-aggregated metrics updated on every batch for sub-millisecond Grafana reads
+- **confluent-kafka over kafka-python** — Python 3.14 compatibility (kafka-python has async networking issues on 3.14)
+- **Idempotent writes** — Unique index on `meta_id` prevents duplicate rows from reprocessing
 
 ## Prerequisites
 
-- Java 17 (JDK) — required for Kafka and Spark
-- Apache Kafka 3.8.0 — installed at `C:\kafka`
-- PostgreSQL 16 — running locally
-- Python 3.x with virtualenv
-- Hadoop winutils — installed at `C:\hadoop\bin` (required for Spark on Windows)
+- Java JDK 17 (Eclipse Temurin)
+- Apache Kafka 3.8.0 (installed at `C:\kafka`)
+- PostgreSQL 16
+- Redis / Memurai (Windows)
+- Grafana
+- Python 3.14 with virtualenv
+- Hadoop winutils (at `C:\hadoop\bin`) — required for PySpark on Windows
+
+## Project Structure
+
+```
+wiki_changeset_streaming/
+├── producer.py              ← Wikimedia SSE → Kafka producer
+├── consumer.py              ← Kafka → Postgres + Redis consumer
+├── redis_writer.py          ← Redis metrics update module
+├── .env                     ← Environment config (not committed)
+├── postgres_init/
+│   └── 01_bronze_schema.sql ← Bronze table schema
+├── infra_start.bat          ← Start Zookeeper + Kafka
+├── producer_start.bat       ← Start producer (usage: producer_start.bat <topic>)
+├── consumer_start.bat       ← Start consumer (usage: consumer_start.bat <topic>)
+├── create_topic.bat         ← Create Kafka topic (usage: create_topic.bat <topic> <partitions> <replication>)
+└── kill_switch.bat          ← Stop all services cleanly
+```
 
 ## Setup
 
-1. Create the Bronze table in pgAdmin or psql:
-   ```sql
-   -- run postgres_init/01_bronze_schema.sql against your database
-   ```
+### 1. Create Bronze table in PostgreSQL
 
-2. Create and configure `.env` file in project root:
-   ```
-   KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
-   WIKI_STREAM_URL=https://stream.wikimedia.org/v2/stream/recentchange
-   WIKI_FILTER=enwiki
-   TYPE_FILTER=edit,new
-   EXCLUDE_BOTS=true
-   POSTGRES_HOST=127.0.0.1
-   POSTGRES_PORT=5432
-   POSTGRES_DB=your_db_name
-   POSTGRES_USER=your_username
-   POSTGRES_PASSWORD=your_password
-   POSTGRES_TABLE=wiki_changes_bronze
-   CHECKPOINT_LOCATION=./_checkpoints/wiki_changes_bronze
-   ```
+Run in pgAdmin Query Tool against your database:
+```sql
+-- postgres_init/01_bronze_schema.sql
+```
 
-3. Install dependencies:
-   ```powershell
-   pip install -r requirements.txt
-   ```
+### 2. Configure `.env`
 
-## Running locally (Windows)
+```
+KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
+WIKI_STREAM_URL=https://stream.wikimedia.org/v2/stream/recentchange
+WIKI_FILTER=enwiki,commonswiki,ruwiki
+TYPE_FILTER=edit,new
+EXCLUDE_BOTS=true
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_DB=your_db_name
+POSTGRES_USER=your_username
+POSTGRES_PASSWORD=your_password
+POSTGRES_TABLE=wiki_changes_bronze
+CHECKPOINT_LOCATION=./_checkpoints/wiki_changes_bronze
+```
 
-### Step 1 — Start infrastructure (Zookeeper + Kafka)
+### 3. Install dependencies
+
+```powershell
+pip install -r requirements.txt
+```
+
+## Running Locally (Windows)
+
+### Step 1 — Start infrastructure
 ```powershell
 .\infra_start.bat
 ```
-Starts Zookeeper and Kafka broker. Run this once before starting producer or consumer.
+Starts Zookeeper and Kafka broker. Run once — keep running.
 
 ### Step 2 — Create Kafka topic
 ```powershell
-.\create_topic.bat raw_wiki_changes 1 1
+.\create_topic.bat raw_wiki_changes 3 1
 ```
-Usage: `create_topic.bat <topic_name> <partitions> <replication_factor>`
 
 ### Step 3 — Start producer
 ```powershell
 .\producer_start.bat raw_wiki_changes
 ```
-Usage: `producer_start.bat <topic_name>`
-Connects to Wikimedia EventStreams and forwards Wikipedia edit events to Kafka.
+Connects to Wikimedia EventStreams, filters to enwiki/commonswiki/ruwiki human edits, forwards to Kafka.
 
 ### Step 4 — Start consumer
 ```powershell
 .\consumer_start.bat raw_wiki_changes
 ```
-Usage: `consumer_start.bat <topic_name>`
-Reads from Kafka and writes to Postgres `wiki_changes_bronze` table every 10 seconds.
+PySpark Structured Streaming job — reads Kafka, writes to Postgres + Redis every 10 seconds.
 
-### Step 5 — Shutdown (always use this, never close windows manually)
+### Step 5 — Backfill Redis from Postgres (optional)
+```powershell
+python redis_writer.py
+```
+Populates Redis with last 24 hours of historical data from Postgres on startup.
+
+### Step 6 — Shutdown (always use this)
 ```powershell
 .\kill_switch.bat
 ```
-Stops Kafka first, then Zookeeper — ensures clean shutdown with no stale Zookeeper nodes.
+Stops Kafka first, then Zookeeper — clean shutdown prevents NodeExistsException on restart.
 
-## Bat file responsibilities
+## Verifying the Pipeline
 
-| File | Purpose |
-|---|---|
-| `infra_start.bat` | Start Zookeeper + Kafka only |
-| `create_topic.bat` | Create a Kafka topic on demand |
-| `producer_start.bat` | Start producer for a given topic |
-| `consumer_start.bat` | Start Spark consumer for a given topic |
-| `kill_switch.bat` | Stop all services cleanly |
-
-## Verifying the pipeline
-
-Check messages in Kafka topic:
+**Check Kafka messages:**
 ```powershell
-C:\kafka\bin\windows\kafka-console-consumer.bat --topic raw_wiki_changes --bootstrap-server 127.0.0.1:9092 --from-beginning
+C:\kafka\bin\windows\kafka-console-consumer.bat --topic raw_wiki_changes --bootstrap-server 127.0.0.1:9092 --from-beginning --property print.key=true
 ```
 
-Check rows in Postgres:
+**Check Postgres:**
 ```sql
-SELECT COUNT(*) FROM wiki_changes_bronze;
-SELECT * FROM wiki_changes_bronze ORDER BY ingested_at DESC LIMIT 10;
+SELECT wiki, COUNT(*) FROM wiki_changes_bronze GROUP BY wiki;
 ```
+
+**Check Redis:**
+```powershell
+memurai-cli keys *
+memurai-cli zrevrange top_editors:enwiki 0 9 withscores
+memurai-cli hgetall daily_counts:enwiki
+```
+
+**Spark UI:**
+```
+http://localhost:4040
+```
+
+**Grafana Dashboard:**
+```
+http://localhost:3000
+```
+
+## Redis Metrics Schema
+
+| Key Pattern | Type | Contents |
+|---|---|---|
+| `edit_velocity:{wiki}` | Sorted Set | meta_id → unix timestamp (last 10 min) |
+| `top_editors:{wiki}` | Sorted Set | username → edit count (last 10 min) |
+| `daily_counts:{wiki}` | Hash | YYYY-MM-DD-HH → edit count (last 24h) |
+
+## Grafana Dashboard Panels
+
+1. **Edit Velocity** — `ZCOUNT edit_velocity:enwiki -inf +inf` → Stat panel
+2. **Top Editors** — `ZREVRANGE top_editors:enwiki 0 9 WITHSCORES` → Bar chart
+3. **Daily Counts** — PostgreSQL query → Time series chart
 
 ## Roadmap
 
-- [x] Producer — Wikimedia SSE → Kafka
-- [x] Consumer — Kafka → Postgres (Bronze)
-- [ ] Validate end-to-end locally
-- [ ] Silver/Gold transformations
+- [x] Producer — Wikimedia SSE → Kafka (3 partitions)
+- [x] Consumer — Kafka → PostgreSQL Bronze layer
+- [x] Redis — real-time metrics (velocity, top editors, daily counts)
+- [x] Grafana — live dashboard
+- [ ] Silver/Gold transformations (dbt)
 - [ ] Docker packaging
-- [ ] Orchestration (Airflow) — later
+- [ ] Orchestration (Airflow)
