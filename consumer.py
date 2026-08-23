@@ -13,6 +13,9 @@ Run locally (no Docker) with, e.g.:
 """
 
 import os
+from confluent_kafka import Producer as KafkaProducer
+from datetime import datetime
+import json
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, from_unixtime, to_timestamp
@@ -25,8 +28,6 @@ from redis_writer import update_metrics_from_batch
 import time
 from dotenv import load_dotenv
 load_dotenv()
-
-
 
 INSTANCE_ID = str(int(time.time()))
 CHECKPOINT_LOCATION = f"./_checkpoints/wiki_changes_bronze_{INSTANCE_ID}"
@@ -49,6 +50,9 @@ JDBC_PROPERTIES = {
     "password": POSTGRES_PASSWORD,
     "driver": "org.postgresql.Driver",
 }
+
+DLQ_TOPIC = os.getenv("DLQ_TOPIC", "raw_wiki_changes_dlq")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
 
 # Must mirror the dict shape produced by producer.normalize()
 EVENT_SCHEMA = StructType([
@@ -77,9 +81,28 @@ def build_spark_session() -> SparkSession:
         .getOrCreate()
     )
 
+def get_dlq_producer():
+    return KafkaProducer({
+        'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS
+    })
+
+def send_to_dlq(rows: list, error: str, batch_id: int):
+    producer = get_dlq_producer()
+    for row in rows:
+        dlq_payload = {
+            "original_message": row,
+            "error": error,
+            "batch_id": batch_id,
+            "failed_at": str(datetime.now()),
+            "stage": "consumer"
+        }
+        producer.produce(
+            DLQ_TOPIC,
+            value=json.dumps(dlq_payload).encode("utf-8")
+        )
+    producer.flush()
 
 def write_batch_to_postgres(batch_df, batch_id: int):
-    """foreachBatch sink: dedupe within the micro-batch, then append to Postgres."""
     if batch_df.count() == 0:
         return
 
@@ -94,7 +117,10 @@ def write_batch_to_postgres(batch_df, batch_id: int):
         if "duplicate key" in str(e).lower():
             print(f"[batch {batch_id}] skipping duplicates")
         else:
-            raise e
+            # Send failed batch to DLQ
+            rows = [row.asDict() for row in deduped.collect()]
+            send_to_dlq(rows, str(e), batch_id)
+            print(f"[batch {batch_id}] sent {len(rows)} rows to DLQ due to: {e}")
 
     # Update Redis metrics
     rows = [

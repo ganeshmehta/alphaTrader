@@ -15,6 +15,7 @@ import os, sys
 import time
 
 from dotenv import load_dotenv
+from datetime import datetime
 load_dotenv()
 
 import requests
@@ -36,6 +37,9 @@ KAFKA_TOPIC = sys.argv[1] if len(sys.argv) > 1 else os.getenv("KAFKA_TOPIC", "no
 WIKI_FILTER = {w.strip() for w in os.getenv("WIKI_FILTER", "no-topic").split(",") if w.strip()}
 TYPE_FILTER = {t.strip() for t in os.getenv("TYPE_FILTER", "edit,new").split(",") if t.strip()}
 EXCLUDE_BOTS = os.getenv("EXCLUDE_BOTS", "true").lower() == "true"
+
+DLQ_TOPIC = os.getenv("DLQ_TOPIC", "raw_wiki_changes_dlq")
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 RECONNECT_BACKOFF_SECONDS = 5
 KAFKA_CONNECT_RETRY_SECONDS = 5
@@ -134,13 +138,37 @@ def run():
 
                 payload = normalize(event)
                 key = payload["wiki"] or "unknown"
-
-                producer.produce(
-                    KAFKA_TOPIC,
-                    key=key.encode("utf-8"),
-                    value=json.dumps(payload).encode("utf-8"),
-                    callback=delivery_report
-                )
+                retry_count = 0
+                while retry_count <= MAX_RETRIES:
+                    try:
+                        producer.produce(
+                            KAFKA_TOPIC,
+                            key=key.encode("utf-8"),
+                            value=json.dumps(payload).encode("utf-8"),
+                            callback=delivery_report
+                        )
+                        producer.poll(0)
+                        sent += 1
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count > MAX_RETRIES:
+                            dlq_payload = {
+                                "original_message": payload,
+                                "error": str(e),
+                                "retry_count": retry_count,
+                                "failed_at": str(datetime.now()),
+                                "stage": "producer"
+                            }
+                            producer.produce(
+                                DLQ_TOPIC,
+                                value=json.dumps(dlq_payload).encode("utf-8")
+                            )
+                            producer.poll(0)
+                            log.error("Message sent to DLQ after %d retries: %s", MAX_RETRIES, e)
+                        else:
+                            log.warning("Retry %d/%d for message: %s", retry_count, MAX_RETRIES, e)
+                            time.sleep(1)               
                 producer.poll(0)
                 sent += 1
 
